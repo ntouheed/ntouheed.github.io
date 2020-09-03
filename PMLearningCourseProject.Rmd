@@ -1,0 +1,181 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "N Touheed"
+date: "8/29/2020"
+output: html_document
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+### Introduction
+
+We are thankful to the authors of the paper: 
+
+"Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013."
+
+for allowing us to use the WLE dataset.
+
+We first downloaded the Weight Lifting Exercises training data (pml-training.csv) for this project into the working directory form the website:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+Likewise, we also downloaded the Weight Lifting Exercises testing data (pml-testing.csv) for this project into the working directory form the website:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+We, next define and populate two data frames from these two csv files:
+
+```{r}
+trainDf <- read.csv("E:\\Coursera\\08 Practical Machine Learning\\Project\\pml-training.csv", header = TRUE)
+# Given testing data will be used for validation purpose
+validationDf <- read.csv("E:\\Coursera\\08 Practical Machine Learning\\Project\\pml-testing.csv", header = TRUE)
+```
+
+### Cleaning Data
+We first clean the dataset and exclude those attributes which have missing values. We also remove few meaningless variables. We begin with cleaning the Near Zero Variance Variables.
+
+```{r}
+library(caret)
+nearZV <- nearZeroVar(trainDf, saveMetrics = TRUE)
+```
+```{r}
+trainDf01 <- trainDf[, !nearZV$nzv]
+validationDf01 <- validationDf[, !nearZV$nzv]
+dim(trainDf01); dim(validationDf01)
+```
+
+Removing those attributes of the dataset that contribute very little to the accelerometer measurements.
+
+```{r}
+toRemove <- grepl("^X|timestamp|user_name", names(trainDf01))
+trainDf <- trainDf01[, !toRemove]
+validationDf <- validationDf01[, !toRemove]
+rm(toRemove); rm(trainDf01); rm(validationDf01)
+dim(trainDf); dim(validationDf)
+```
+
+In the final step of cleaning, we remove attributes that contain NA's.
+
+```{r}
+removeCond <- (colSums(is.na(trainDf)) == 0)
+trainDf <- trainDf[, removeCond]
+validationDf <- validationDf[, removeCond]
+rm(removeCond); dim(trainDf); dim(validationDf)
+```
+So, we endup with train data set containing  19622 observations and 54 attributes, while the validation data set contains 20 observations and same 54 attributes.
+
+Let us have a Correlation Matrix of attributes in the train data set:
+
+```{r}
+library(corrplot)
+corrplot(cor(trainDf[, -length(names(trainDf))]), method = "square", tl.cex = 0.5)
+```
+
+### Datasets for prediction
+Let us Prepare the data for prediction by splitting the training data into 70% as train data and 30% as test data. This splitting will also be used to compute the out-of-sample errors.
+
+It may please be noted that the original test data saved under validationDf will stay as is and will be used later to test the prediction algorithm on the 20 cases.
+
+```{r}
+set.seed(135) 
+train <- createDataPartition(trainDf$classe, p = 0.7, list = FALSE)
+trainDf0 <- trainDf
+trainDf <- trainDf0[train, ]
+testDf <- trainDf0[-train, ]
+rm(trainDf0); dim(trainDf); dim(testDf)
+```
+
+### Model 1 - Random Forest Algorithm
+
+```{r}
+set.seed(1234)
+rfControl <- trainControl(method="cv", number=3, verboseIter=FALSE)
+rfModFit <- train(classe ~ ., data=trainDf, method="rf", trControl=rfControl)
+rfModFit$finalModel
+```
+
+### Now, we estimate the performance of the model on the testing data set.
+
+```{r}
+rfPredict <- predict(rfModFit, newdata=testDf)
+rfConfMat <- confusionMatrix(factor(rfPredict), factor(testDf$classe))
+rfConfMat
+```
+
+```{r}
+accuracy <- postResample(rfPredict, factor(testDf$classe))
+outOfSampleError <- 1 - as.numeric((rfConfMat)$overall[1])
+accuracy; outOfSampleError 
+```
+
+The Estimated Accuracy of the Random Forest Model is 99.5582% and the Estimated Out-of-Sample Error is 0.4418012%. We will compare these values with other algorithms. Hopefully, Random Forests will yielded better Results, as happens in majority of the cases!
+
+### Model 2 - Decision Tree
+We next fit a predictive model for activity recognition using Decision Tree algorithm.
+
+```{r}
+library(rpart)
+library(rpart.plot)
+decisionTree <- rpart(classe ~ ., data = trainDf, method = "class")
+prp(decisionTree)
+```
+
+Next, we estimate the performance of the decision tree model on the testing data set.
+
+```{r}
+predictTree <- predict(decisionTree, testDf, type = "class")
+dtConfMat <- confusionMatrix(factor(testDf$classe), factor(predictTree))
+dtConfMat
+```
+
+```{r}
+accuracy <- postResample(predictTree, factor(testDf$classe))
+outOfSampleError <- 1 - as.numeric((dtConfMat)$overall[1])
+accuracy; outOfSampleError
+```
+The Estimated Accuracy of the Decision Tree Model is 70.45030% and the Estimated Out-of-Sample Error is 29.5497%. We can compare this with Random Forest Model. Decision Tree Model is less accurate and Out-of-Sample Error is also large.
+
+### Model 3 - At the end we like to have Prediction with Classification Trees.
+Let us first obtain the model, and then use the fancyRpartPlot() function to plot the classification tree as a dendogram.
+
+```{r}
+library(rattle)
+set.seed(135)
+cTModFit <- rpart(classe ~ ., data=trainDf, method="class")
+fancyRpartPlot(cTModFit)
+```
+
+Let us now validate the "cTModFit" model on the testDf to find out how well it performs by looking at the accuracy variable.
+
+```{r}
+cTModFitPrediction <- predict(cTModFit, testDf, type = "class")
+cTConfMat <- confusionMatrix(cTModFitPrediction, factor(testDf$classe))
+cTConfMat
+```
+
+```{r}
+outOfSampleError <- 1 - as.numeric((cTConfMat)$overall[1])
+outOfSampleError 
+```
+
+### Plot matrix results
+```{r}
+plot(cTConfMat$table, col = cTConfMat$byClass, 
+     main = paste("Decision Tree - Accuracy =", round(cTConfMat$overall['Accuracy'], 4)))
+```
+
+We can see that the accuracy rate of the model is low: 0.7045 and therefore the out-of-sample-error is about 0.295497 which is considerable.
+
+### Conclusion.
+
+Out of three predictions model considered here, the Random Forest Model is the best model.
+
+
+Finally, we pay attention to the Course Project Prediction Quiz, i.e. Predicting the Manner of Exercise for the original testing data. We apply the Random Forest model to the original testing data set downloaded from the data source and named as validationDf. We remove the problem_id column first.
+
+```{r}
+predict(rfModFit, validationDf[, -length(names(validationDf))])
+```
